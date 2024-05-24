@@ -6,4 +6,4 @@
 
 ## 構成図
 
-<img src="/image/iam_account_lock_none.png">
+<img src="/img/iam_account_lock_none.png">
