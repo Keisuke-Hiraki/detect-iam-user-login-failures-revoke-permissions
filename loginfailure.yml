@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  LoginFailuresTable:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: LoginFailures
+      AttributeDefinitions: 
+        - AttributeName: UserId
+          AttributeType: S
+      KeySchema: 
+        - AttributeName: UserId
+          KeyType: HASH
+      ProvisionedThroughput: 
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      TimeToLiveSpecification:
+        AttributeName: TTL
+        Enabled: true
+
+  LoginFailureHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LoginFailureHandler
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.10
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import time
+
+          dynamodb = boto3.resource('dynamodb')
+          iam = boto3.client('iam')
+
+          def handler(event, context):
+              user_id = event['detail']['userIdentity']['arn'].split('/')[-1]
+              table = dynamodb.Table('LoginFailures')
+
+              # Fetch the current failure count
+              response = table.get_item(Key={'UserId': user_id})
+              failure_count = response.get('Item', {}).get('FailureCount', 0)
+              failure_count += 1
+
+              # Set TTL (1 hour from now)
+              ttl = int(time.time()) + 3600
+
+              # Update the failure count
+              table.put_item(Item={'UserId': user_id, 'FailureCount': failure_count, 'TTL': ttl})
+
+              # Check if the failure count exceeds the threshold
+              if failure_count >= 6:
+                  policy = {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                          {
+                              "Effect": "Deny",
+                              "Action": "*",
+                              "Resource": "*"
+                          }
+                      ]
+                  }
+
+                  iam.put_user_policy(
+                      UserName=user_id,
+                      PolicyName='DenyAllActions',
+                      PolicyDocument=json.dumps(policy)
+                  )
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: LambdaDynamoDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt LoginFailuresTable.Arn
+              - Effect: Allow
+                Action: iam:PutUserPolicy
+                Resource: "*"
+
+  CrossRegionLoginFailuresEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: CrossRegionLoginFailuresEventBus
+
+  ReceiverEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: ReceiverEventRule
+      EventBusName: !Ref CrossRegionLoginFailuresEventBus
+      EventPattern:
+        account:
+          - "578415560967"
+      Targets:
+        - Arn: !GetAtt LoginFailureHandlerFunction.Arn
+          Id: "LoginFailureHandlerFunction"
+  
+  EventBridgeTargetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EventBridgeTargetRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EventBridgeTargetPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/CrossRegionLoginFailuresEventBus"
+
+  LoginFailureEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: LoginFailureEventRule
+      EventPattern:
+        source:
+          - "aws.signin"
+        detail-type:
+          - "AWS Console Sign In via CloudTrail"
+        detail:
+          eventSource:
+            - "signin.amazonaws.com"
+          responseElements:
+            ConsoleLogin:
+              - "Failure"
+      Targets:
+        - Arn: !GetAtt CrossRegionLoginFailuresEventBus.Arn
+          Id: "CrossRegionLoginFailuresEventBus"
+          RoleArn: !GetAtt EventBridgeTargetRole.Arn
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LoginFailureHandlerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReceiverEventRule.Arn
