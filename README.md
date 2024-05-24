@@ -6,4 +6,4 @@
 
 ## 構成図
 
-<img src="/image/khiraki_privatelink_public_privatelink_demo.png">
+<img src="/image/iam_account_lock_none.png">
