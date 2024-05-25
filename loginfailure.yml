@@ -106,7 +106,7 @@ Resources:
       EventBusName: !Ref CrossRegionLoginFailuresEventBus
       EventPattern:
         account:
-          - "578415560967"
+          - !Ref "AWS::AccountId"
       Targets:
         - Arn: !GetAtt LoginFailureHandlerFunction.Arn
           Id: "LoginFailureHandlerFunction"
