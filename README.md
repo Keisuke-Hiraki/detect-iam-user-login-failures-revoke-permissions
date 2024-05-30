@@ -4,6 +4,11 @@
 
 ## リソース
 
+- loginfailure.yml
+  - バージニア北部にて構築するリソーステンプレート
+- loginfailure_other_region.yml
+  - その他のリージョンで構築するリソーステンプレート
+
 ## 構成図
 
 <img src="/img/iam_account_lock_none.png">
